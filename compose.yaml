@@ -8,9 +8,21 @@ x-airflow-environment: &airflow-environment
   AIRFLOW__CORE__LOAD_EXAMPLES: "false"
   AIRFLOW__CORE__PARALLELISM: "4"
   AIRFLOW__CORE__TEST_CONNECTION: Enabled
+  AIRFLOW__METRICS__METRICS_ALLOW_LIST: ${AIRFLOW_OTEL_METRICS_ALLOW_LIST:-scheduler,executor,dagrun,pool,ti,task,operator}
+  AIRFLOW__METRICS__OTEL_ON: ${AIRFLOW_OTEL_ENABLED:-false}
+  AIRFLOW__METRICS__OTEL_PREFIX: airflow
+  AIRFLOW__TRACES__OTEL_ON: ${AIRFLOW_OTEL_ENABLED:-false}
+  AIRFLOW__TRACES__TASK_RUNNER_FLUSH_TIMEOUT_MILLISECONDS: "30000"
   AIRFLOW_CONN_LOCAL_POSTGRES: ${AIRFLOW_CONN_LOCAL_POSTGRES:-postgresql://etl:etl-local@postgres:5432/etl}
   AIRFLOW_CONN_LOCAL_S3: ${AIRFLOW_CONN_LOCAL_S3:-{"conn_type":"aws","login":"minio-local","password":"minio-local-secret","extra":{"endpoint_url":"http://object-store:8333","region_name":"us-east-1","config_kwargs":{"s3":{"addressing_style":"path"}}}}}
   ETL_LOCAL_BUCKET: ${ETL_LOCAL_BUCKET:-etl-local}
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_INSECURE: "true"
+  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+  OTEL_LOGS_EXPORTER: none
+  OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-30000}
+  OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-service.namespace=etl-workbench,deployment.environment.name=local}
+  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-etl-workbench-airflow}
   PYTHONPATH: /opt/pipeline/src
 
 services:
@@ -36,6 +48,9 @@ services:
       object-store:
         condition: service_healthy
         required: false
+      otel-collector:
+        condition: service_healthy
+        required: false
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/v2/monitor/health"]
       interval: 15s
@@ -59,6 +74,31 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+    networks:
+      - workbench
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.157.0@sha256:f2f01157055a9b2aab9df7118e1f1c9abf345e99b23bc7a2bc791db374a7d0f6
+    profiles: ["observability"]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - type: bind
+        source: ./observability/otel-collector.yaml
+        target: /etc/otelcol-contrib/config.yaml
+        read_only: true
+    expose:
+      - "4317"
+      - "4318"
+      - "13133"
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - workbench
 

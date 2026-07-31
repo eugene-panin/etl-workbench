@@ -24,7 +24,11 @@ jobs:
           docker compose -f compose.yaml -f compose.local.yaml config --quiet
           docker compose --profile local-db config --quiet
           docker compose --profile local-objects config --quiet
+          docker compose --profile observability config --quiet
           docker compose --profile local-db --profile local-objects config --quiet
+          AIRFLOW_OTEL_ENABLED=true docker compose \
+            --profile local-db --profile local-objects --profile observability \
+            config --quiet
 
       - name: Build image
         run: docker build -t etl-workbench:local .
@@ -57,7 +61,8 @@ jobs:
           ./bin/etl-workbench "$repository" \
             --ref "$ref" \
             --subdir example-pipeline/dags \
-            --image etl-workbench:local
+            --image etl-workbench:local \
+            --observability
           for attempt in $(seq 1 20); do
             if docker compose exec airflow airflow dags list | grep -q workbench_runtime_smoke; then
               break
@@ -69,11 +74,18 @@ jobs:
           done
           docker compose exec airflow airflow dags list | grep pipeline
           docker compose exec airflow airflow dags test workbench_runtime_smoke 2026-01-02
+          scripts/check-otel-contract.sh
 
       - name: Show service logs after failure
         if: failure()
-        run: docker compose -f compose.yaml -f compose.local.yaml --profile local-db --profile local-objects logs --no-color
+        run: >-
+          docker compose -f compose.yaml -f compose.local.yaml
+          --profile local-db --profile local-objects --profile observability
+          logs --no-color
 
       - name: Remove disposable volumes
         if: always()
-        run: docker compose -f compose.yaml -f compose.local.yaml --profile local-db --profile local-objects down --volumes
+        run: >-
+          docker compose -f compose.yaml -f compose.local.yaml
+          --profile local-db --profile local-objects --profile observability
+          down --volumes --remove-orphans

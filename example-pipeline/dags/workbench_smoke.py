@@ -7,6 +7,10 @@ from hashlib import sha256
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.sdk import Param, dag, get_current_context, task
+from airflow.sdk.observability import trace
+
+
+tracer = trace.get_tracer(__name__)
 
 
 @dag(
@@ -25,7 +29,10 @@ def runtime_smoke():
 
     @task
     def log_message(payload: dict[str, str]) -> None:
-        print(payload["message"])
+        with tracer.start_as_current_span("workbench.runtime_smoke") as span:
+            span.set_attribute("pipeline.stage", "runtime")
+            span.set_attribute("workbench.smoke", True)
+            print(payload["message"])
 
     log_message(create_message())
 

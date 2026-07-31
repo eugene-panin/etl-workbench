@@ -58,6 +58,7 @@ Useful options:
 --external-db            do not start local PostgreSQL
 --external-objects       do not start local object storage
 --git-connection ID      use an existing Airflow Git connection
+--observability          export Airflow metrics and traces to a local OTel Collector
 ```
 
 With `--ssh-key`, the launcher writes a generated Airflow connection to the
@@ -170,6 +171,42 @@ makes a live request with the stored credential; for the OpenAI provider, this
 is a model-list request. Gemini's OpenAI-compatible endpoint does not expose
 that model-list route, so validate a Gemini connection with a Chat Completions
 task instead.
+
+## OpenTelemetry baseline
+
+Add `--observability` to start a local OpenTelemetry Collector and export
+Airflow metrics and traces over OTLP:
+
+```bash
+./bin/etl-workbench https://github.com/example/acme-pipeline.git \
+  --observability
+```
+
+The Collector is internal to the Compose network; its OTLP and health ports
+are not published on the host. This baseline uses the Collector's basic debug
+exporter, which records signal counts without payload attributes. It proves the
+telemetry path but does not persist data or provide a UI; a later ClickHouse
+and ClickStack profile can replace the exporter without changing Airflow.
+
+Telemetry is for technical operation only. Do not put credentials, headers,
+SQL parameters, object contents, documents, prompts, model responses or
+personal data into span attributes or metric labels. Keep unique run IDs on
+traces and logs rather than metric labels.
+
+For local-path development, enable the same profile explicitly:
+
+```bash
+AIRFLOW_OTEL_ENABLED=true docker compose \
+  -f compose.yaml -f compose.local.yaml \
+  --profile local-db --profile local-objects --profile observability up
+```
+
+Inspect Collector output or verify the contract after running a DAG:
+
+```bash
+docker compose --profile observability logs otel-collector
+scripts/check-otel-contract.sh
+```
 
 ## Local path development
 
