@@ -1,8 +1,9 @@
 # ETL Workbench
 
 A small local Apache Airflow workbench for trusted, code-defined ETL pipelines.
-It runs Airflow and, when requested, local PostgreSQL and S3-compatible object
-storage. Pipeline code and data contracts stay in their own repositories.
+It runs Airflow and, when requested, local PostgreSQL, ClickHouse and
+S3-compatible object storage. Pipeline code and data contracts stay in their
+own repositories.
 
 This is a single-user development tool. It is not a shared scheduler, control
 plane, deployment platform, or isolation boundary for untrusted DAG code.
@@ -61,6 +62,7 @@ Useful options:
 --external-db            do not start local PostgreSQL
 --external-objects       do not start local object storage
 --git-connection ID      use an existing Airflow Git connection
+--analytics              start a dedicated local ClickHouse analytics database
 --observability          persist Airflow metrics and traces in local ClickStack
 --llm-observability      start Langfuse v4; implies --observability
 ```
@@ -147,10 +149,11 @@ Airflow discovers compatible DAGs from the Git bundle and displays them in its
 UI. The pipeline repository owns schemas and migrations, retry and idempotency
 behavior, object keys and retention, and all business logic.
 
-Local profile connection IDs are `local_postgres` and `local_s3`; the local
-bucket is `etl-local`. SeaweedFS supplies the local S3-compatible endpoint.
-External connections may be created in the Airflow UI or provided as
-`AIRFLOW_CONN_*` variables in the pipeline environment file.
+Local profile connection IDs are `local_postgres`, `local_s3` and, when
+`--analytics` is enabled, `local_clickhouse`; the local bucket is `etl-local`.
+SeaweedFS supplies the local S3-compatible endpoint. External connections may
+be created in the Airflow UI or provided as `AIRFLOW_CONN_*` variables in the
+pipeline environment file.
 
 ## Airflow metadata
 
@@ -213,6 +216,53 @@ makes a live request with the stored credential; for the OpenAI provider, this
 is a model-list request. Gemini's OpenAI-compatible endpoint does not expose
 that model-list route, so validate a Gemini connection with a Chat Completions
 task instead.
+
+## Local analytics with ClickHouse
+
+Add `--analytics` to start a dedicated ClickHouse database for pipeline
+datasets:
+
+```bash
+./bin/etl-workbench https://github.com/example/acme-pipeline.git \
+  --analytics
+```
+
+The HTTP endpoint is <http://127.0.0.1:18123>. Inside the Compose network,
+Airflow uses the `local_clickhouse` Connection and the official
+`clickhouse-connect` Python client. The local defaults are database and user
+`analytics`, with password `analytics-local`; override
+`AIRFLOW_CONN_LOCAL_CLICKHOUSE` when using non-local credentials.
+
+This ClickHouse is persistent and belongs to pipeline analytics: event facts,
+large append-heavy datasets, aggregates and reporting marts. PostgreSQL
+remains the right default for Airflow metadata, transactional state and small
+relational datasets.
+
+It is intentionally separate from ClickStack's embedded ClickHouse and from
+Langfuse's ClickHouse. Those two databases are private implementation details
+of their observability products and pipelines must not query or write them.
+
+A pipeline can resolve the Airflow Connection without committing credentials:
+
+```python
+from airflow.sdk.bases.hook import BaseHook
+import clickhouse_connect
+
+connection = BaseHook.get_connection("local_clickhouse")
+client = clickhouse_connect.get_client(
+    host=connection.host,
+    port=connection.port or 8123,
+    username=connection.login,
+    password=connection.password,
+    database=connection.schema,
+)
+```
+
+Verify DDL, insert and query access through the Airflow container:
+
+```bash
+scripts/check-clickhouse-contract.sh
+```
 
 ## Local observability with ClickStack
 
@@ -334,6 +384,9 @@ docker compose -f compose.yaml -f compose.local.yaml \
   --profile local-objects run --rm \
   -v "$PWD/scripts:/opt/workbench/scripts:ro" airflow \
   python /opt/workbench/scripts/check-s3-contract.py
+docker compose -f compose.yaml -f compose.local.yaml \
+  --profile local-db --profile analytics up -d --wait
+scripts/check-clickhouse-contract.sh
 ```
 
 The S3 contract check writes only below a unique `_workbench_contract/` prefix
