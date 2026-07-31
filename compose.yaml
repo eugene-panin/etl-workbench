@@ -9,7 +9,7 @@ x-airflow-environment: &airflow-environment
   AIRFLOW__CORE__PARALLELISM: "4"
   AIRFLOW__CORE__TEST_CONNECTION: Enabled
   AIRFLOW_CONN_LOCAL_POSTGRES: ${AIRFLOW_CONN_LOCAL_POSTGRES:-postgresql://etl:etl-local@postgres:5432/etl}
-  AIRFLOW_CONN_LOCAL_S3: ${AIRFLOW_CONN_LOCAL_S3:-{"conn_type":"aws","login":"minio-local","password":"minio-local-secret","extra":{"endpoint_url":"http://minio.localhost:9000","region_name":"us-east-1","config_kwargs":{"s3":{"addressing_style":"path"}}}}}
+  AIRFLOW_CONN_LOCAL_S3: ${AIRFLOW_CONN_LOCAL_S3:-{"conn_type":"aws","login":"minio-local","password":"minio-local-secret","extra":{"endpoint_url":"http://object-store:8333","region_name":"us-east-1","config_kwargs":{"s3":{"addressing_style":"path"}}}}}
   ETL_LOCAL_BUCKET: ${ETL_LOCAL_BUCKET:-etl-local}
   PYTHONPATH: /opt/pipeline/src
 
@@ -33,8 +33,8 @@ services:
       postgres:
         condition: service_healthy
         required: false
-      minio-init:
-        condition: service_completed_successfully
+      object-store:
+        condition: service_healthy
         required: false
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/v2/monitor/health"]
@@ -62,48 +62,36 @@ services:
     networks:
       - workbench
 
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+  object-store:
+    image: chrislusf/seaweedfs:4.40@sha256:52194fba4fecd0083c842158b3a902ba6e04a63619b2b0efcd08007bdb6a4602
     profiles: ["local-objects"]
-    command: ["server", "/data", "--console-address", ":9001"]
+    command:
+      - mini
+      - -dir=/data
+      - -master.telemetry=false
+      - -webdav=false
+      - -admin.ui=false
+      - -s3.port.iceberg=0
     environment:
-      - MINIO_ROOT_USER=minio-local
-      - MINIO_ROOT_PASSWORD=minio-local-secret
-      - MINIO_KMS_SECRET_KEY
+      AWS_ACCESS_KEY_ID: minio-local
+      AWS_SECRET_ACCESS_KEY: minio-local-secret
+      S3_BUCKET: ${ETL_LOCAL_BUCKET:-etl-local}
     ports:
-      - "127.0.0.1:${MINIO_API_PORT:-59000}:9000"
-      - "127.0.0.1:${MINIO_CONSOLE_PORT:-59001}:9001"
+      - "127.0.0.1:${LOCAL_S3_PORT:-${MINIO_API_PORT:-59000}}:8333"
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/minio/health/live"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9333/cluster/status"]
       interval: 5s
       timeout: 5s
       retries: 20
-    networks:
-      workbench:
-        aliases:
-          - minio.localhost
-
-  minio-init:
-    image: minio/mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
-    profiles: ["local-objects"]
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >-
-        mc alias set local http://minio:9000 minio-local minio-local-secret
-        && mc mb --ignore-existing local/${ETL_LOCAL_BUCKET:-etl-local}
-    restart: "no"
     networks:
       - workbench
 
 volumes:
   airflow-home:
   postgres-data:
-  minio-data:
+  seaweedfs-data:
 
 networks:
   workbench:

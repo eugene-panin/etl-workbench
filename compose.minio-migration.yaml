@@ -1,0 +1,47 @@
+services:
+  legacy-minio:
+    image: quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
+    profiles: ["migrate-minio"]
+    command: ["server", "/data"]
+    environment:
+      MINIO_ROOT_USER: minio-local
+      MINIO_ROOT_PASSWORD: minio-local-secret
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks:
+      - workbench
+
+  migrate-minio:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3
+    profiles: ["migrate-minio"]
+    depends_on:
+      legacy-minio:
+        condition: service_healthy
+      object-store:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        mc alias set source http://legacy-minio:9000 minio-local minio-local-secret
+        && mc alias set target http://object-store:8333 minio-local minio-local-secret
+        && mc mirror --overwrite --preserve
+        source/${ETL_LOCAL_BUCKET:-etl-local}
+        target/${ETL_LOCAL_BUCKET:-etl-local}
+        && differences="$$(mc diff --no-color
+        source/${ETL_LOCAL_BUCKET:-etl-local}
+        target/${ETL_LOCAL_BUCKET:-etl-local})"
+        && if [ -n "$$differences" ]; then
+        printf '%s\n' "$$differences" >&2;
+        exit 1;
+        fi
+    restart: "no"
+    networks:
+      - workbench
+
+volumes:
+  minio-data:

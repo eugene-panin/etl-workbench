@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
+from hashlib import sha256
 
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -51,10 +52,34 @@ def storage_smoke():
 
     @task
     def check_object_store() -> None:
-        params = get_current_context()["params"]
+        context = get_current_context()
+        params = context["params"]
         hook = S3Hook(aws_conn_id=params["s3_conn_id"])
         if not hook.check_for_bucket(params["bucket"]):
             raise RuntimeError(f"bucket does not exist: {params['bucket']}")
+        client = hook.get_conn()
+        run_token = sha256(str(context["run_id"]).encode()).hexdigest()[:16]
+        key = f"_workbench_smoke/{run_token}.txt"
+        payload = b"etl-workbench-storage-smoke\n"
+        try:
+            client.put_object(Bucket=params["bucket"], Key=key, Body=payload)
+            response = client.get_object(Bucket=params["bucket"], Key=key)
+            downloaded = response["Body"].read()
+            if sha256(downloaded).digest() != sha256(payload).digest():
+                raise RuntimeError("object content differs after upload")
+            listing = client.list_objects_v2(Bucket=params["bucket"], Prefix=key)
+            if not any(item["Key"] == key for item in listing.get("Contents", [])):
+                raise RuntimeError("uploaded object is missing from listing")
+        except BaseException as operation_error:
+            try:
+                client.delete_object(Bucket=params["bucket"], Key=key)
+            except BaseException as cleanup_error:
+                operation_error.add_note(
+                    f"object cleanup also failed for {key!r}: {cleanup_error!r}"
+                )
+            raise
+        else:
+            client.delete_object(Bucket=params["bucket"], Key=key)
 
     check_postgres() >> check_object_store()
 

@@ -140,8 +140,9 @@ UI. The pipeline repository owns schemas and migrations, retry and idempotency
 behavior, object keys and retention, and all business logic.
 
 Local profile connection IDs are `local_postgres` and `local_s3`; the local
-bucket is `etl-local`. External connections may be created in the Airflow UI or
-provided as `AIRFLOW_CONN_*` variables in the pipeline environment file.
+bucket is `etl-local`. SeaweedFS supplies the local S3-compatible endpoint.
+External connections may be created in the Airflow UI or provided as
+`AIRFLOW_CONN_*` variables in the pipeline environment file.
 
 ## LLM connections
 
@@ -191,7 +192,39 @@ docker compose -f compose.yaml -f compose.local.yaml config --quiet
 docker build -t etl-workbench:local .
 docker compose -f compose.yaml -f compose.local.yaml run --rm airflow python -c \
   'from airflow.models import DagBag; b=DagBag("/opt/airflow/dags"); assert not b.import_errors, b.import_errors'
+docker compose -f compose.yaml -f compose.local.yaml \
+  --profile local-objects run --rm \
+  -v "$PWD/scripts:/opt/workbench/scripts:ro" airflow \
+  python /opt/workbench/scripts/check-s3-contract.py
 ```
+
+The S3 contract check writes only below a unique `_workbench_contract/` prefix
+and removes its objects before returning. It verifies put, metadata, get, list,
+presigned GET, copy, multipart upload and delete through the same Airflow
+`local_s3` Connection that pipeline tasks use.
+
+## Upgrade from MinIO
+
+SeaweedFS uses a new `seaweedfs-data` volume; it cannot read the MinIO volume
+format directly. The old `minio-data` volume is never removed by the upgrade.
+If it contains objects that must be retained, stop the old stack without
+deleting volumes and run the one-time copy:
+
+```bash
+docker compose down --remove-orphans
+docker volume inspect etl-workbench_minio-data
+docker compose -f compose.yaml -f compose.minio-migration.yaml \
+  --profile local-objects --profile migrate-minio \
+  up --abort-on-container-exit migrate-minio
+docker compose -f compose.yaml -f compose.minio-migration.yaml \
+  --profile local-objects --profile migrate-minio down
+```
+
+The migration copies the current contents of `ETL_LOCAL_BUCKET` and fails if
+`mc diff` reports a difference; it does not delete the source volume. After it
+succeeds, start the workbench normally. To roll back, stop the new stack
+without `--volumes` and run the previous workbench release against the
+preserved `minio-data` volume.
 
 ## Stop
 
