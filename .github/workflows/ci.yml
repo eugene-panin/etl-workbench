@@ -11,7 +11,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +29,14 @@ jobs:
           AIRFLOW_OTEL_ENABLED=true docker compose \
             --profile local-db --profile local-objects --profile observability \
             config --quiet
+          LANGFUSE_ENV_FILE=langfuse.env.example docker compose \
+            -f compose.yaml -f compose.langfuse.yaml \
+            --profile local-db --profile local-objects \
+            --profile observability --profile llm-observability \
+            config --quiet
+
+      - name: Test launcher
+        run: python -m unittest discover -s tests
 
       - name: Build image
         run: docker build -t etl-workbench:local .
@@ -62,7 +70,7 @@ jobs:
             --ref "$ref" \
             --subdir example-pipeline/dags \
             --image etl-workbench:local \
-            --observability
+            --llm-observability
           for attempt in $(seq 1 20); do
             if docker compose exec airflow airflow dags list | grep -q workbench_runtime_smoke; then
               break
@@ -75,17 +83,22 @@ jobs:
           docker compose exec airflow airflow dags list | grep pipeline
           docker compose exec airflow airflow dags test workbench_runtime_smoke 2026-01-02
           scripts/check-otel-contract.sh
+          scripts/check-langfuse-contract.sh
 
       - name: Show service logs after failure
         if: failure()
-        run: >-
-          docker compose -f compose.yaml -f compose.local.yaml
-          --profile local-db --profile local-objects --profile observability
-          logs --no-color
+        run: |
+          LANGFUSE_ENV_FILE=langfuse.env.example docker compose \
+            -f compose.yaml -f compose.local.yaml -f compose.langfuse.yaml \
+            --profile local-db --profile local-objects \
+            --profile observability --profile llm-observability \
+            logs --no-color
 
       - name: Remove disposable volumes
         if: always()
-        run: >-
-          docker compose -f compose.yaml -f compose.local.yaml
-          --profile local-db --profile local-objects --profile observability
-          down --volumes --remove-orphans
+        run: |
+          LANGFUSE_ENV_FILE=langfuse.env.example docker compose \
+            -f compose.yaml -f compose.local.yaml -f compose.langfuse.yaml \
+            --profile local-db --profile local-objects \
+            --profile observability --profile llm-observability \
+            down --volumes --remove-orphans

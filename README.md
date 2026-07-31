@@ -59,6 +59,7 @@ Useful options:
 --external-objects       do not start local object storage
 --git-connection ID      use an existing Airflow Git connection
 --observability          persist Airflow metrics and traces in local ClickStack
+--llm-observability      start Langfuse v4; implies --observability
 ```
 
 With `--ssh-key`, the launcher writes a generated Airflow connection to the
@@ -223,6 +224,49 @@ Verify persisted telemetry after running a DAG:
 ```bash
 scripts/check-otel-contract.sh
 ```
+
+## Local LLM observability with Langfuse
+
+Add `--llm-observability` to start Langfuse v4 together with ClickStack:
+
+```bash
+./bin/etl-workbench https://github.com/example/acme-pipeline.git \
+  --llm-observability
+```
+
+Open the Langfuse UI at <http://127.0.0.1:18082>. The launcher generates the
+initial local user, project keys and service secrets once in the ignored
+`.workbench/langfuse.env` file with mode `0600`:
+
+```bash
+grep '^LANGFUSE_INIT_' .workbench/langfuse.env
+```
+
+Langfuse reuses Workbench PostgreSQL and SeaweedFS through its own `langfuse`
+database and bucket. It runs dedicated ClickHouse and Redis services because
+they are part of Langfuse's storage and queue contract. ClickStack's embedded
+ClickHouse remains isolated and stores infrastructure telemetry only.
+
+Only the Langfuse UI is published, on loopback. ClickHouse, Redis and the worker
+health port remain inside the Compose network. The generated project keys are
+for Langfuse ingestion; they are not model-provider API keys.
+
+This profile provides the LLM observability backend. A pipeline still needs
+OpenTelemetry-compatible LLM instrumentation and must send only approved prompt
+and response content. Do not export credentials, authorization headers,
+personal data or unrestricted source documents.
+
+Verify the complete OTLP ingestion path with a synthetic, non-sensitive
+generation span:
+
+```bash
+scripts/check-langfuse-contract.sh
+```
+
+SeaweedFS keeps a free-space reserve before allocating new volumes. If an S3
+upload returns `InternalError`, check `docker logs etl-workbench-object-store-1`
+for `No writable volumes and no free volumes left`, then reclaim Docker image or
+build cache space. Do not delete named volumes as a cleanup shortcut.
 
 ## Local path development
 
