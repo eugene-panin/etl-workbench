@@ -58,7 +58,7 @@ Useful options:
 --external-db            do not start local PostgreSQL
 --external-objects       do not start local object storage
 --git-connection ID      use an existing Airflow Git connection
---observability          export Airflow metrics and traces to a local OTel Collector
+--observability          persist Airflow metrics and traces in local ClickStack
 ```
 
 With `--ssh-key`, the launcher writes a generated Airflow connection to the
@@ -172,21 +172,38 @@ is a model-list request. Gemini's OpenAI-compatible endpoint does not expose
 that model-list route, so validate a Gemini connection with a Chat Completions
 task instead.
 
-## OpenTelemetry baseline
+## Local observability with ClickStack
 
-Add `--observability` to start a local OpenTelemetry Collector and export
-Airflow metrics and traces over OTLP:
+Add `--observability` to start ClickStack and persist Airflow metrics and traces
+over OTLP:
 
 ```bash
 ./bin/etl-workbench https://github.com/example/acme-pipeline.git \
   --observability
 ```
 
-The Collector is internal to the Compose network; its OTLP and health ports
-are not published on the host. This baseline uses the Collector's basic debug
-exporter, which records signal counts without payload attributes. It proves the
-telemetry path but does not persist data or provide a UI; a later ClickHouse
-and ClickStack profile can replace the exporter without changing Airflow.
+Open the ClickStack UI at <http://127.0.0.1:18081>. The embedded ClickHouse and
+OTLP ports remain internal to the Compose network.
+
+This profile uses the official ClickStack All-in-One image and persistent
+volumes for ClickHouse data, MongoDB application state and ClickHouse logs.
+It is intended for this local, single-server Workbench; the All-in-One
+distribution is not a production deployment.
+
+The committed `etl-workbench-local` ingestion key activates the internal OTLP
+receiver before the first ClickStack user exists and remains accepted after
+team authentication is enabled. It is a local development credential, not an
+API key for any model provider. Override it before sharing a Docker network:
+
+```bash
+CLICKSTACK_INGESTION_KEY="$(openssl rand -hex 32)" \
+  ./bin/etl-workbench https://github.com/example/acme-pipeline.git \
+  --observability
+```
+
+ClickStack's ClickHouse stores technical telemetry only. It does not replace
+Airflow metadata storage and pipelines should not use its `otel_*` tables for
+business or ETL datasets.
 
 Telemetry is for technical operation only. Do not put credentials, headers,
 SQL parameters, object contents, documents, prompts, model responses or
@@ -201,10 +218,9 @@ AIRFLOW_OTEL_ENABLED=true docker compose \
   --profile local-db --profile local-objects --profile observability up
 ```
 
-Inspect Collector output or verify the contract after running a DAG:
+Verify persisted telemetry after running a DAG:
 
 ```bash
-docker compose --profile observability logs otel-collector
 scripts/check-otel-contract.sh
 ```
 

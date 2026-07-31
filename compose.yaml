@@ -16,7 +16,8 @@ x-airflow-environment: &airflow-environment
   AIRFLOW_CONN_LOCAL_POSTGRES: ${AIRFLOW_CONN_LOCAL_POSTGRES:-postgresql://etl:etl-local@postgres:5432/etl}
   AIRFLOW_CONN_LOCAL_S3: ${AIRFLOW_CONN_LOCAL_S3:-{"conn_type":"aws","login":"minio-local","password":"minio-local-secret","extra":{"endpoint_url":"http://object-store:8333","region_name":"us-east-1","config_kwargs":{"s3":{"addressing_style":"path"}}}}}
   ETL_LOCAL_BUCKET: ${ETL_LOCAL_BUCKET:-etl-local}
-  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://clickstack:4317
+  OTEL_EXPORTER_OTLP_HEADERS: authorization=${CLICKSTACK_INGESTION_KEY:-etl-workbench-local}
   OTEL_EXPORTER_OTLP_INSECURE: "true"
   OTEL_EXPORTER_OTLP_PROTOCOL: grpc
   OTEL_LOGS_EXPORTER: none
@@ -48,7 +49,7 @@ services:
       object-store:
         condition: service_healthy
         required: false
-      otel-collector:
+      clickstack:
         condition: service_healthy
         required: false
     healthcheck:
@@ -77,28 +78,29 @@ services:
     networks:
       - workbench
 
-  otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.157.0@sha256:f2f01157055a9b2aab9df7118e1f1c9abf345e99b23bc7a2bc791db374a7d0f6
+  clickstack:
+    image: clickhouse/clickstack-all-in-one:2.32.0@sha256:54a0a805d761d6fef76122736a0d62400b78f69bd00394fe15086c8eda39b6c7
     profiles: ["observability"]
-    command: ["--config=/etc/otelcol-contrib/config.yaml"]
     restart: unless-stopped
-    read_only: true
+    environment:
+      INGESTION_API_KEY: ${CLICKSTACK_INGESTION_KEY:-etl-workbench-local}
     security_opt:
       - no-new-privileges:true
+    ports:
+      - "127.0.0.1:${CLICKSTACK_UI_PORT:-18081}:8080"
     volumes:
-      - type: bind
-        source: ./observability/otel-collector.yaml
-        target: /etc/otelcol-contrib/config.yaml
-        read_only: true
+      - clickstack-mongodb:/data/db
+      - clickstack-clickhouse:/var/lib/clickhouse
+      - clickstack-clickhouse-logs:/var/log/clickhouse-server
     expose:
       - "4317"
       - "4318"
-      - "13133"
     healthcheck:
-      test: ["CMD", "/otelcol-contrib", "validate", "--config=/etc/otelcol-contrib/config.yaml"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/health"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 20
+      start_period: 60s
     networks:
       - workbench
 
@@ -130,6 +132,9 @@ services:
 
 volumes:
   airflow-home:
+  clickstack-clickhouse:
+  clickstack-clickhouse-logs:
+  clickstack-mongodb:
   postgres-data:
   seaweedfs-data:
 

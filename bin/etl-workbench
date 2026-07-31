@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--observability",
         action="store_true",
-        help="export Airflow metrics and traces to the local OpenTelemetry Collector",
+        help="persist Airflow metrics and traces in local ClickStack",
     )
     return parser.parse_args()
 
@@ -244,7 +244,8 @@ def main() -> None:
     print("Airflow: http://127.0.0.1:18080", flush=True)
     print("DAG bundles: " + ", ".join(bundle.name for bundle in bundles), flush=True)
     if args.observability:
-        print("OpenTelemetry: enabled (local Collector debug exporter)", flush=True)
+        clickstack_ui_port = compose_env.get("CLICKSTACK_UI_PORT", "18081")
+        print(f"ClickStack: http://127.0.0.1:{clickstack_ui_port}", flush=True)
 
 
 if __name__ == "__main__":
