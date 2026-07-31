@@ -34,11 +34,6 @@ jobs:
           AIRFLOW_OTEL_ENABLED=true docker compose \
             --profile local-db --profile local-objects --profile observability \
             config --quiet
-          LANGFUSE_ENV_FILE=langfuse.env.example docker compose \
-            -f compose.yaml -f compose.langfuse.yaml \
-            --profile local-db --profile local-objects \
-            --profile observability --profile llm-observability \
-            config --quiet
           N8N_ENV_FILE=n8n.env.example docker compose \
             -f compose.yaml -f compose.n8n.yaml \
             --profile local-db --profile automation \
@@ -99,7 +94,7 @@ jobs:
             --image etl-workbench:local \
             --analytics \
             --automation \
-            --llm-observability
+            --observability
           for attempt in $(seq 1 20); do
             if docker compose exec airflow airflow dags list | grep -q workbench_runtime_smoke; then
               break
@@ -114,31 +109,28 @@ jobs:
           scripts/check-airflow-metadata-contract.sh
           scripts/check-clickhouse-contract.sh
           scripts/check-otel-contract.sh
-          scripts/check-langfuse-contract.sh
           scripts/check-n8n-contract.sh
 
       - name: Show service logs after failure
         if: failure()
         run: |
-          LANGFUSE_ENV_FILE=langfuse.env.example \
-            N8N_ENV_FILE=n8n.env.example \
+          N8N_ENV_FILE=n8n.env.example \
             docker compose \
             -f compose.yaml -f compose.local.yaml \
-            -f compose.langfuse.yaml -f compose.n8n.yaml \
+            -f compose.n8n.yaml \
             --profile local-db --profile local-objects \
             --profile analytics --profile automation \
-            --profile observability --profile llm-observability \
+            --profile observability \
             logs --no-color
 
       - name: Remove disposable volumes
         if: always()
         run: |
-          LANGFUSE_ENV_FILE=langfuse.env.example \
-            N8N_ENV_FILE=n8n.env.example \
+          N8N_ENV_FILE=n8n.env.example \
             docker compose \
             -f compose.yaml -f compose.local.yaml \
-            -f compose.langfuse.yaml -f compose.n8n.yaml \
+            -f compose.n8n.yaml \
             --profile local-db --profile local-objects \
             --profile analytics --profile automation \
-            --profile observability --profile llm-observability \
+            --profile observability \
             down --volumes --remove-orphans

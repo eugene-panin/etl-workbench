@@ -66,7 +66,6 @@ Useful options:
 --inference-gpu          start vLLM on one NVIDIA GPU
 --automation             start local n8n workflow automation
 --observability          persist Airflow metrics and traces in local ClickStack
---llm-observability      start Langfuse v4; implies --observability
 ```
 
 With `--external-db`, set `AIRFLOW_METADATA_DATABASE_URL` to a supported
@@ -260,9 +259,9 @@ Verify model discovery and one synthetic Chat Completions request:
 scripts/check-vllm-contract.sh
 ```
 
-vLLM exposes Prometheus metrics at `/metrics`. LLM request traces still belong
-to the pipeline instrumentation and Langfuse; model prompts and responses must
-not be copied into infrastructure metric labels.
+vLLM exposes Prometheus metrics at `/metrics`. A pipeline may emit
+OpenTelemetry GenAI spans to ClickStack, but model prompts and responses must
+not be copied into infrastructure metric labels or exported by default.
 
 Docker Desktop on macOS cannot expose the Apple GPU to this CUDA container.
 For Mac-local inference, run Ollama or an MLX server on the host and create
@@ -337,9 +336,9 @@ large append-heavy datasets, aggregates and reporting marts. PostgreSQL
 remains the right default for Airflow metadata, transactional state and small
 relational datasets.
 
-It is intentionally separate from ClickStack's embedded ClickHouse and from
-Langfuse's ClickHouse. Those two databases are private implementation details
-of their observability products and pipelines must not query or write them.
+It is intentionally separate from ClickStack's embedded ClickHouse. That
+database is a private implementation detail of the observability product and
+pipelines must not query or write it.
 
 A pipeline can resolve the Airflow Connection without committing credentials:
 
@@ -415,43 +414,11 @@ Verify persisted telemetry after running a DAG:
 scripts/check-otel-contract.sh
 ```
 
-## Local LLM observability with Langfuse
-
-Add `--llm-observability` to start Langfuse v4 together with ClickStack:
-
-```bash
-./bin/etl-workbench https://github.com/example/acme-pipeline.git \
-  --llm-observability
-```
-
-Open the Langfuse UI at <http://127.0.0.1:18082>. The launcher generates the
-initial local user, project keys and service secrets once in the ignored
-`.workbench/langfuse.env` file with mode `0600`:
-
-```bash
-grep '^LANGFUSE_INIT_' .workbench/langfuse.env
-```
-
-Langfuse reuses Workbench PostgreSQL and SeaweedFS through its own `langfuse`
-database and bucket. It runs dedicated ClickHouse and Redis services because
-they are part of Langfuse's storage and queue contract. ClickStack's embedded
-ClickHouse remains isolated and stores infrastructure telemetry only.
-
-Only the Langfuse UI is published, on loopback. ClickHouse, Redis and the worker
-health port remain inside the Compose network. The generated project keys are
-for Langfuse ingestion; they are not model-provider API keys.
-
-This profile provides the LLM observability backend. A pipeline still needs
-OpenTelemetry-compatible LLM instrumentation and must send only approved prompt
-and response content. Do not export credentials, authorization headers,
-personal data or unrestricted source documents.
-
-Verify the complete OTLP ingestion path with a synthetic, non-sensitive
-generation span:
-
-```bash
-scripts/check-langfuse-contract.sh
-```
+LLM calls use the same observability backend rather than a second database and
+UI. Pipeline code may send OpenTelemetry GenAI semantic spans to the configured
+OTLP endpoint. Workbench does not capture prompt or response bodies
+automatically. Keep credentials, authorization headers, personal data,
+unrestricted source documents and high-cardinality content out of telemetry.
 
 SeaweedFS keeps a free-space reserve before allocating new volumes. If an S3
 upload returns `InternalError`, check `docker logs etl-workbench-object-store-1`

@@ -15,7 +15,6 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / ".workbench"
 BASE_IMAGE = "etl-workbench:local"
-LANGFUSE_ENVIRONMENT = STATE / "langfuse.env"
 N8N_ENVIRONMENT = STATE / "n8n.env"
 
 
@@ -81,11 +80,6 @@ def parse_args() -> argparse.Namespace:
         "--observability",
         action="store_true",
         help="persist Airflow metrics and traces in local ClickStack",
-    )
-    parser.add_argument(
-        "--llm-observability",
-        action="store_true",
-        help="start local Langfuse v4 LLM observability; implies --observability",
     )
     return parser.parse_args()
 
@@ -200,58 +194,6 @@ def ensure_private_environment(path: Path, values: dict[str, str]) -> Path:
     return path
 
 
-def ensure_langfuse_environment(path: Path = LANGFUSE_ENVIRONMENT) -> Path:
-    return ensure_private_environment(
-        path,
-        {
-            "NEXTAUTH_URL": "http://localhost:18082",
-            "DATABASE_URL": "postgresql://etl:etl-local@postgres:5432/langfuse",
-            "LANGFUSE_POSTGRES_ADMIN_URL": (
-                "postgresql://etl:etl-local@postgres:5432/postgres"
-            ),
-            "LANGFUSE_POSTGRES_DATABASE": "langfuse",
-            "SALT": secrets.token_hex(32),
-            "ENCRYPTION_KEY": secrets.token_hex(32),
-            "NEXTAUTH_SECRET": secrets.token_hex(32),
-            "TELEMETRY_ENABLED": "false",
-            "CLICKHOUSE_MIGRATION_URL": "clickhouse://langfuse-clickhouse:9000",
-            "CLICKHOUSE_URL": "http://langfuse-clickhouse:8123",
-            "CLICKHOUSE_USER": "clickhouse",
-            "CLICKHOUSE_PASSWORD": secrets.token_urlsafe(32),
-            "CLICKHOUSE_CLUSTER_ENABLED": "false",
-            "LANGFUSE_MIGRATION_V4_NATIVE_OTEL_BEHAVIOUR": "direct",
-            "LANGFUSE_S3_EVENT_UPLOAD_BUCKET": "langfuse",
-            "LANGFUSE_S3_EVENT_UPLOAD_REGION": "us-east-1",
-            "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID": "minio-local",
-            "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY": "minio-local-secret",
-            "LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT": "http://object-store:8333",
-            "LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE": "true",
-            "LANGFUSE_S3_EVENT_UPLOAD_PREFIX": "events/",
-            "LANGFUSE_S3_MEDIA_UPLOAD_BUCKET": "langfuse",
-            "LANGFUSE_S3_MEDIA_UPLOAD_REGION": "us-east-1",
-            "LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID": "minio-local",
-            "LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY": "minio-local-secret",
-            "LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT": "http://object-store:8333",
-            "LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE": "true",
-            "LANGFUSE_S3_MEDIA_UPLOAD_PREFIX": "media/",
-            "LANGFUSE_S3_BATCH_EXPORT_ENABLED": "false",
-            "REDIS_HOST": "langfuse-redis",
-            "REDIS_PORT": "6379",
-            "REDIS_AUTH": secrets.token_urlsafe(32),
-            "REDIS_TLS_ENABLED": "false",
-            "LANGFUSE_INIT_ORG_ID": "etl-workbench",
-            "LANGFUSE_INIT_ORG_NAME": "ETL Workbench",
-            "LANGFUSE_INIT_PROJECT_ID": "etl-workbench",
-            "LANGFUSE_INIT_PROJECT_NAME": "ETL Workbench",
-            "LANGFUSE_INIT_PROJECT_PUBLIC_KEY": "pk-lf-" + secrets.token_hex(16),
-            "LANGFUSE_INIT_PROJECT_SECRET_KEY": "sk-lf-" + secrets.token_hex(32),
-            "LANGFUSE_INIT_USER_EMAIL": "admin@local.test",
-            "LANGFUSE_INIT_USER_NAME": "Local Admin",
-            "LANGFUSE_INIT_USER_PASSWORD": secrets.token_urlsafe(24),
-        },
-    )
-
-
 def ensure_n8n_environment(path: Path = N8N_ENVIRONMENT) -> Path:
     return ensure_private_environment(
         path,
@@ -292,10 +234,6 @@ def main() -> None:
         raise SystemExit(
             "--external-db requires AIRFLOW_METADATA_DATABASE_URL "
             "for the Airflow metadata database"
-        )
-    if args.llm_observability and (args.external_db or args.external_objects):
-        raise SystemExit(
-            "--llm-observability currently requires local PostgreSQL and object storage"
         )
     if args.automation and args.external_db:
         raise SystemExit("--automation currently requires local PostgreSQL")
@@ -353,9 +291,6 @@ def main() -> None:
     if ssh_key:
         compose_files.extend(["-f", "compose.git-ssh.yaml"])
         compose_env["GIT_KNOWN_HOSTS_PATH"] = str(known_hosts)
-    if args.llm_observability:
-        compose_files.extend(["-f", "compose.langfuse.yaml"])
-        compose_env["LANGFUSE_ENV_FILE"] = str(ensure_langfuse_environment())
     if args.automation:
         compose_files.extend(["-f", "compose.n8n.yaml"])
         compose_env["N8N_ENV_FILE"] = str(ensure_n8n_environment())
@@ -385,11 +320,9 @@ def main() -> None:
         command.extend(["--profile", "inference-gpu"])
     if args.automation:
         command.extend(["--profile", "automation"])
-    if args.observability or args.llm_observability:
+    if args.observability:
         compose_env["AIRFLOW_OTEL_ENABLED"] = "true"
         command.extend(["--profile", "observability"])
-    if args.llm_observability:
-        command.extend(["--profile", "llm-observability"])
     if not args.external_db:
         run([*command, "stop", "airflow"], env=compose_env)
     command.extend(["up", "-d", "--wait"])
@@ -413,12 +346,9 @@ def main() -> None:
     if args.automation:
         n8n_ui_port = compose_env.get("N8N_UI_PORT", "18083")
         print(f"n8n: http://127.0.0.1:{n8n_ui_port}", flush=True)
-    if args.observability or args.llm_observability:
+    if args.observability:
         clickstack_ui_port = compose_env.get("CLICKSTACK_UI_PORT", "18081")
         print(f"ClickStack: http://127.0.0.1:{clickstack_ui_port}", flush=True)
-    if args.llm_observability:
-        langfuse_ui_port = compose_env.get("LANGFUSE_UI_PORT", "18082")
-        print(f"Langfuse: http://127.0.0.1:{langfuse_ui_port}", flush=True)
 
 
 if __name__ == "__main__":
