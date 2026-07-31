@@ -76,11 +76,6 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="start local n8n workflow automation",
     )
-    parser.add_argument(
-        "--observability",
-        action="store_true",
-        help="persist Airflow metrics and traces in local ClickStack",
-    )
     return parser.parse_args()
 
 
@@ -320,9 +315,6 @@ def main() -> None:
         command.extend(["--profile", "inference-gpu"])
     if args.automation:
         command.extend(["--profile", "automation"])
-    if args.observability:
-        compose_env["AIRFLOW_OTEL_ENABLED"] = "true"
-        command.extend(["--profile", "observability"])
     if not args.external_db:
         run([*command, "stop", "airflow"], env=compose_env)
     command.extend(["up", "-d", "--wait"])
@@ -346,11 +338,6 @@ def main() -> None:
     if args.automation:
         n8n_ui_port = compose_env.get("N8N_UI_PORT", "18083")
         print(f"n8n: http://127.0.0.1:{n8n_ui_port}", flush=True)
-    if args.observability:
-        clickstack_ui_port = compose_env.get("CLICKSTACK_UI_PORT", "18081")
-        print(f"ClickStack: http://127.0.0.1:{clickstack_ui_port}", flush=True)
-
-
 if __name__ == "__main__":
     try:
         main()

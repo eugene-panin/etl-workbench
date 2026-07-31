@@ -9,25 +9,12 @@ x-airflow-environment: &airflow-environment
   AIRFLOW__CORE__PARALLELISM: "4"
   AIRFLOW__CORE__TEST_CONNECTION: Enabled
   AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_METADATA_DATABASE_URL:-postgresql+psycopg2://etl:etl-local@postgres:5432/airflow}
-  AIRFLOW__METRICS__METRICS_ALLOW_LIST: ${AIRFLOW_OTEL_METRICS_ALLOW_LIST:-scheduler,executor,dagrun,pool,ti,task,operator}
-  AIRFLOW__METRICS__OTEL_ON: ${AIRFLOW_OTEL_ENABLED:-false}
-  AIRFLOW__METRICS__OTEL_PREFIX: airflow
-  AIRFLOW__TRACES__OTEL_ON: ${AIRFLOW_OTEL_ENABLED:-false}
-  AIRFLOW__TRACES__TASK_RUNNER_FLUSH_TIMEOUT_MILLISECONDS: "30000"
   AIRFLOW_CONN_LOCAL_POSTGRES: ${AIRFLOW_CONN_LOCAL_POSTGRES:-postgresql://etl:etl-local@postgres:5432/etl}
   AIRFLOW_CONN_LOCAL_S3: ${AIRFLOW_CONN_LOCAL_S3:-{"conn_type":"aws","login":"minio-local","password":"minio-local-secret","extra":{"endpoint_url":"http://object-store:8333","region_name":"us-east-1","config_kwargs":{"s3":{"addressing_style":"path"}}}}}
   AIRFLOW_CONN_LOCAL_CLICKHOUSE: ${AIRFLOW_CONN_LOCAL_CLICKHOUSE:-{"conn_type":"http","host":"analytics-clickhouse","login":"analytics","password":"analytics-local","schema":"analytics","port":8123}}
   AIRFLOW_CONN_LOCAL_N8N: ${AIRFLOW_CONN_LOCAL_N8N:-{"conn_type":"http","host":"http://n8n:5678"}}
   AIRFLOW_CONN_LLM_LOCAL_VLLM: ${AIRFLOW_CONN_LLM_LOCAL_VLLM:-{"conn_type":"openai","password":"vllm-local","host":"http://vllm:8000/v1"}}
   ETL_LOCAL_BUCKET: ${ETL_LOCAL_BUCKET:-etl-local}
-  OTEL_EXPORTER_OTLP_ENDPOINT: http://clickstack:4317
-  OTEL_EXPORTER_OTLP_HEADERS: authorization=${CLICKSTACK_INGESTION_KEY:-etl-workbench-local}
-  OTEL_EXPORTER_OTLP_INSECURE: "true"
-  OTEL_EXPORTER_OTLP_PROTOCOL: grpc
-  OTEL_LOGS_EXPORTER: none
-  OTEL_METRIC_EXPORT_INTERVAL: ${OTEL_METRIC_EXPORT_INTERVAL:-30000}
-  OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-service.namespace=etl-workbench,deployment.environment.name=local}
-  OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-etl-workbench-airflow}
   PYTHONPATH: /opt/pipeline/src
   VLLM_SERVED_MODEL_NAME: ${VLLM_SERVED_MODEL_NAME:-local-model}
 
@@ -61,9 +48,6 @@ services:
         condition: service_healthy
         required: false
       vllm:
-        condition: service_healthy
-        required: false
-      clickstack:
         condition: service_healthy
         required: false
     healthcheck:
@@ -143,34 +127,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    networks:
-      - workbench
-
-  clickstack:
-    image: clickhouse/clickstack-all-in-one:2.32.0@sha256:54a0a805d761d6fef76122736a0d62400b78f69bd00394fe15086c8eda39b6c7
-    profiles: ["observability"]
-    restart: unless-stopped
-    environment:
-      INGESTION_API_KEY: ${CLICKSTACK_INGESTION_KEY:-etl-workbench-local}
-    security_opt:
-      - no-new-privileges:true
-    ports:
-      - "127.0.0.1:${CLICKSTACK_UI_PORT:-18081}:8080"
-    volumes:
-      - clickstack-mongodb:/data/db
-      - clickstack-clickhouse:/var/lib/clickhouse
-      - clickstack-clickhouse-logs:/var/log/clickhouse-server
-    tmpfs:
-      - /var/log:size=256m,mode=1777
-    expose:
-      - "4317"
-      - "4318"
-    healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 20
-      start_period: 60s
     networks:
       - workbench
 
@@ -288,9 +244,6 @@ services:
 volumes:
   analytics-clickhouse-data:
   airflow-home:
-  clickstack-clickhouse:
-  clickstack-clickhouse-logs:
-  clickstack-mongodb:
   postgres-data:
   seaweedfs-data:
   vllm-huggingface-cache:

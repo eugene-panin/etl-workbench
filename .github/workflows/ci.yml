@@ -26,13 +26,9 @@ jobs:
           docker compose --profile local-objects config --quiet
           docker compose --profile analytics config --quiet
           docker compose --profile inference-gpu config --quiet
-          docker compose --profile observability config --quiet
           docker compose \
             --profile local-db --profile local-objects \
             --profile analytics --profile inference-gpu \
-            config --quiet
-          AIRFLOW_OTEL_ENABLED=true docker compose \
-            --profile local-db --profile local-objects --profile observability \
             config --quiet
           N8N_ENV_FILE=n8n.env.example docker compose \
             -f compose.yaml -f compose.n8n.yaml \
@@ -93,8 +89,7 @@ jobs:
             --subdir example-pipeline/dags \
             --image etl-workbench:local \
             --analytics \
-            --automation \
-            --observability
+            --automation
           for attempt in $(seq 1 20); do
             if docker compose exec airflow airflow dags list | grep -q workbench_runtime_smoke; then
               break
@@ -108,7 +103,6 @@ jobs:
           docker compose exec airflow airflow dags test workbench_runtime_smoke 2026-01-02
           scripts/check-airflow-metadata-contract.sh
           scripts/check-clickhouse-contract.sh
-          scripts/check-otel-contract.sh
           scripts/check-n8n-contract.sh
 
       - name: Show service logs after failure
@@ -120,7 +114,6 @@ jobs:
             -f compose.n8n.yaml \
             --profile local-db --profile local-objects \
             --profile analytics --profile automation \
-            --profile observability \
             logs --no-color
 
       - name: Remove disposable volumes
@@ -132,5 +125,4 @@ jobs:
             -f compose.n8n.yaml \
             --profile local-db --profile local-objects \
             --profile analytics --profile automation \
-            --profile observability \
             down --volumes --remove-orphans

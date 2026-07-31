@@ -65,7 +65,6 @@ Useful options:
 --analytics              start a dedicated local ClickHouse analytics database
 --inference-gpu          start vLLM on one NVIDIA GPU
 --automation             start local n8n workflow automation
---observability          persist Airflow metrics and traces in local ClickStack
 ```
 
 With `--external-db`, set `AIRFLOW_METADATA_DATABASE_URL` to a supported
@@ -259,9 +258,9 @@ Verify model discovery and one synthetic Chat Completions request:
 scripts/check-vllm-contract.sh
 ```
 
-vLLM exposes Prometheus metrics at `/metrics`. A pipeline may emit
-OpenTelemetry GenAI spans to ClickStack, but model prompts and responses must
-not be copied into infrastructure metric labels or exported by default.
+vLLM exposes Prometheus metrics at `/metrics`. LLM request telemetry is not
+bundled. Keep model prompts, responses, credentials and personal data out of
+infrastructure logs and metric labels.
 
 Docker Desktop on macOS cannot expose the Apple GPU to this CUDA container.
 For Mac-local inference, run Ollama or an MLX server on the host and create
@@ -336,10 +335,6 @@ large append-heavy datasets, aggregates and reporting marts. PostgreSQL
 remains the right default for Airflow metadata, transactional state and small
 relational datasets.
 
-It is intentionally separate from ClickStack's embedded ClickHouse. That
-database is a private implementation detail of the observability product and
-pipelines must not query or write it.
-
 A pipeline can resolve the Airflow Connection without committing credentials:
 
 ```python
@@ -361,64 +356,6 @@ Verify DDL, insert and query access through the Airflow container:
 ```bash
 scripts/check-clickhouse-contract.sh
 ```
-
-## Local observability with ClickStack
-
-Add `--observability` to start ClickStack and persist Airflow metrics and traces
-over OTLP:
-
-```bash
-./bin/etl-workbench https://github.com/example/acme-pipeline.git \
-  --observability
-```
-
-Open the ClickStack UI at <http://127.0.0.1:18081>. The embedded ClickHouse and
-OTLP ports remain internal to the Compose network.
-
-This profile uses the official ClickStack All-in-One image and persistent
-volumes for ClickHouse data, MongoDB application state and ClickHouse logs.
-It is intended for this local, single-server Workbench; the All-in-One
-distribution is not a production deployment.
-
-The committed `etl-workbench-local` ingestion key activates the internal OTLP
-receiver before the first ClickStack user exists and remains accepted after
-team authentication is enabled. It is a local development credential, not an
-API key for any model provider. Override it before sharing a Docker network:
-
-```bash
-CLICKSTACK_INGESTION_KEY="$(openssl rand -hex 32)" \
-  ./bin/etl-workbench https://github.com/example/acme-pipeline.git \
-  --observability
-```
-
-ClickStack's ClickHouse stores technical telemetry only. It does not replace
-Airflow metadata storage and pipelines should not use its `otel_*` tables for
-business or ETL datasets.
-
-Telemetry is for technical operation only. Do not put credentials, headers,
-SQL parameters, object contents, documents, prompts, model responses or
-personal data into span attributes or metric labels. Keep unique run IDs on
-traces and logs rather than metric labels.
-
-For local-path development, enable the same profile explicitly:
-
-```bash
-AIRFLOW_OTEL_ENABLED=true docker compose \
-  -f compose.yaml -f compose.local.yaml \
-  --profile local-db --profile local-objects --profile observability up
-```
-
-Verify persisted telemetry after running a DAG:
-
-```bash
-scripts/check-otel-contract.sh
-```
-
-LLM calls use the same observability backend rather than a second database and
-UI. Pipeline code may send OpenTelemetry GenAI semantic spans to the configured
-OTLP endpoint. Workbench does not capture prompt or response bodies
-automatically. Keep credentials, authorization headers, personal data,
-unrestricted source documents and high-cardinality content out of telemetry.
 
 SeaweedFS keeps a free-space reserve before allocating new volumes. If an S3
 upload returns `InternalError`, check `docker logs etl-workbench-object-store-1`
