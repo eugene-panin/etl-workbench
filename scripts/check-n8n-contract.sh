@@ -7,7 +7,7 @@ n8n_env="${N8N_ENV_FILE:-$root/.workbench/n8n.env}"
 N8N_ENV_FILE="$n8n_env" docker compose \
     -f "$root/compose.yaml" \
     -f "$root/compose.n8n.yaml" \
-    --profile automation \
+    --profile local-db --profile automation \
     exec -T n8n node - <<'JS'
 const endpoints = ["/healthz", "/healthz/readiness"];
 
