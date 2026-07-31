@@ -2,19 +2,33 @@
 set -eu
 
 attempt=1
-while [ "$attempt" -le 20 ]; do
-    logs="$(docker compose --profile observability logs --no-color otel-collector 2>&1)"
-    traces_seen=false
-    metrics_seen=false
+while [ "$attempt" -le 30 ]; do
+    traces="$(
+        docker compose --profile observability exec -T clickstack clickhouse-client \
+            --query "SELECT count() FROM otel_traces WHERE ServiceName = 'etl-workbench-airflow'"
+    )"
+    metrics="$(
+        docker compose --profile observability exec -T clickstack clickhouse-client \
+            --query "
+                SELECT sum(metric_count)
+                FROM
+                (
+                    SELECT count() AS metric_count FROM otel_metrics_gauge WHERE ServiceName = 'etl-workbench-airflow'
+                    UNION ALL
+                    SELECT count() AS metric_count FROM otel_metrics_sum WHERE ServiceName = 'etl-workbench-airflow'
+                    UNION ALL
+                    SELECT count() AS metric_count FROM otel_metrics_histogram WHERE ServiceName = 'etl-workbench-airflow'
+                    UNION ALL
+                    SELECT count() AS metric_count FROM otel_metrics_summary WHERE ServiceName = 'etl-workbench-airflow'
+                    UNION ALL
+                    SELECT count() AS metric_count FROM otel_metrics_exponential_histogram WHERE ServiceName = 'etl-workbench-airflow'
+                )
+            "
+    )"
 
-    if printf '%s\n' "$logs" | grep -Eq 'Traces.*[Ss]pans[^0-9]*[1-9]'; then
-        traces_seen=true
-    fi
-    if printf '%s\n' "$logs" | grep -Eq 'Metrics.*[Mm]etrics[^0-9]*[1-9]'; then
-        metrics_seen=true
-    fi
-    if [ "$traces_seen" = true ] && [ "$metrics_seen" = true ]; then
-        printf 'OpenTelemetry contract passed: Airflow traces and metrics reached the Collector\n'
+    if [ "$traces" -gt 0 ] && [ "$metrics" -gt 0 ]; then
+        printf 'OpenTelemetry contract passed: ClickStack stored %s Airflow spans and %s metric points\n' \
+            "$traces" "$metrics"
         exit 0
     fi
 
@@ -22,6 +36,6 @@ while [ "$attempt" -le 20 ]; do
     sleep 2
 done
 
-printf 'OpenTelemetry contract failed: Collector did not receive both Airflow traces and metrics\n' >&2
-printf '%s\n' "$logs" >&2
+printf 'OpenTelemetry contract failed: ClickStack did not store both Airflow traces and metrics\n' >&2
+printf 'Airflow spans: %s; metric points: %s\n' "$traces" "$metrics" >&2
 exit 1
