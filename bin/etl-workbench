@@ -240,6 +240,11 @@ def main() -> None:
         raise SystemExit("provide one repository or --bundle-manifest")
     if args.bundle_manifest and args.git_connection:
         raise SystemExit("--git-connection is only available for the single-repository mode")
+    if args.external_db and not os.environ.get("AIRFLOW_METADATA_DATABASE_URL"):
+        raise SystemExit(
+            "--external-db requires AIRFLOW_METADATA_DATABASE_URL "
+            "for the Airflow metadata database"
+        )
     if args.llm_observability and (args.external_db or args.external_objects):
         raise SystemExit(
             "--llm-observability currently requires local PostgreSQL and object storage"
@@ -326,6 +331,8 @@ def main() -> None:
         command.extend(["--profile", "observability"])
     if args.llm_observability:
         command.extend(["--profile", "llm-observability"])
+    if not args.external_db:
+        run([*command, "stop", "airflow"], env=compose_env)
     command.extend(["up", "-d", "--wait"])
     run(command, env=compose_env)
     print("Airflow: http://127.0.0.1:18080", flush=True)

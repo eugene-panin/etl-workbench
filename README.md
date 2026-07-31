@@ -35,6 +35,9 @@ PostgreSQL and object storage, and waits for the services to become healthy.
 Airflow then clones and refreshes the DAG bundle itself. Each task run records
 the Git version of the DAG code that produced it.
 
+The local PostgreSQL service contains a dedicated `airflow` metadata database.
+Pipeline tables remain separate in their own databases or schemas.
+
 Open <http://127.0.0.1:18080>. The generated local login is stored inside the
 `airflow-home` volume:
 
@@ -61,6 +64,9 @@ Useful options:
 --observability          persist Airflow metrics and traces in local ClickStack
 --llm-observability      start Langfuse v4; implies --observability
 ```
+
+With `--external-db`, set `AIRFLOW_METADATA_DATABASE_URL` to a supported
+PostgreSQL SQLAlchemy URL. Do not put that URL in a committed environment file.
 
 With `--ssh-key`, the launcher writes a generated Airflow connection to the
 ignored `.workbench/runtime.env` with mode `0600`. The private key is used by
@@ -145,6 +151,41 @@ Local profile connection IDs are `local_postgres` and `local_s3`; the local
 bucket is `etl-local`. SeaweedFS supplies the local S3-compatible endpoint.
 External connections may be created in the Airflow UI or provided as
 `AIRFLOW_CONN_*` variables in the pipeline environment file.
+
+## Airflow metadata
+
+Local Airflow metadata is stored in the dedicated PostgreSQL database
+`airflow`, not in the pipeline database `etl`. On the first start after
+upgrading an existing Workbench, the metadata initializer:
+
+1. creates a consistent SQLite backup;
+2. initializes the PostgreSQL schema with `airflow db migrate`;
+3. copies all Airflow tables in one PostgreSQL transaction;
+4. validates row counts and resets PostgreSQL sequences;
+5. writes a private migration marker.
+
+The original SQLite file is not removed. The stable rollback copy and marker
+are stored inside the `airflow-home` volume:
+
+```text
+/var/lib/airflow/backups/airflow-sqlite-pre-postgres.db
+/var/lib/airflow/.metadata-postgres-migrated.json
+```
+
+Both files use mode `0600`; the backup still contains sensitive encrypted
+metadata and must not be copied into the repository. The launcher stops Airflow
+before the first migration so the SQLite snapshot cannot miss concurrent task
+updates.
+
+Verify the active backend:
+
+```bash
+scripts/check-airflow-metadata-contract.sh
+```
+
+To roll back, stop Airflow, preserve the PostgreSQL and `airflow-home` volumes,
+restore the backup as `/var/lib/airflow/airflow.db`, and run the previous
+Workbench release. Do not delete either volume while investigating a migration.
 
 ## LLM connections
 
@@ -342,8 +383,8 @@ rm -rf .workbench
 ```
 
 Scheduled runs stop when the laptop or Compose stack stops. Shared scheduling,
-remote Airflow metadata, distributed executors, monitoring, and untrusted DAG
-execution are outside this workbench's scope.
+high availability, distributed executors, remote secret management, and
+untrusted DAG execution are outside this workbench's scope.
 
 ## License
 

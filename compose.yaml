@@ -8,6 +8,7 @@ x-airflow-environment: &airflow-environment
   AIRFLOW__CORE__LOAD_EXAMPLES: "false"
   AIRFLOW__CORE__PARALLELISM: "4"
   AIRFLOW__CORE__TEST_CONNECTION: Enabled
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_METADATA_DATABASE_URL:-postgresql+psycopg2://etl:etl-local@postgres:5432/airflow}
   AIRFLOW__METRICS__METRICS_ALLOW_LIST: ${AIRFLOW_OTEL_METRICS_ALLOW_LIST:-scheduler,executor,dagrun,pool,ti,task,operator}
   AIRFLOW__METRICS__OTEL_ON: ${AIRFLOW_OTEL_ENABLED:-false}
   AIRFLOW__METRICS__OTEL_PREFIX: airflow
@@ -43,6 +44,9 @@ services:
     volumes:
       - airflow-home:/var/lib/airflow
     depends_on:
+      airflow-metadata-init:
+        condition: service_completed_successfully
+        required: false
       postgres:
         condition: service_healthy
         required: false
@@ -66,6 +70,52 @@ services:
       timeout: 5s
       retries: 20
       start_period: 45s
+    networks:
+      - workbench
+
+  airflow-db-create:
+    image: postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa
+    profiles: ["local-db"]
+    restart: "no"
+    environment:
+      PGPASSWORD: etl-local
+    command:
+      - sh
+      - -ec
+      - >-
+        psql --host postgres --username etl --dbname postgres
+        --tuples-only --no-align
+        --command "SELECT 1 FROM pg_database WHERE datname = 'airflow'"
+        | grep -q 1
+        || createdb --host postgres --username etl airflow
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - workbench
+
+  airflow-metadata-init:
+    image: ${AIRFLOW_IMAGE:-etl-workbench:local}
+    profiles: ["local-db"]
+    restart: "no"
+    environment:
+      AIRFLOW_HOME: /var/lib/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: ${AIRFLOW_METADATA_DATABASE_URL:-postgresql+psycopg2://etl:etl-local@postgres:5432/airflow}
+    command:
+      - python
+      - /opt/workbench/scripts/migrate-airflow-metadata.py
+    volumes:
+      - airflow-home:/var/lib/airflow
+      - ./scripts:/opt/workbench/scripts:ro
+    depends_on:
+      airflow-db-create:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
     networks:
       - workbench
 
