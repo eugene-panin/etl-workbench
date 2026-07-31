@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from importlib.machinery import SourceFileLoader
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -82,6 +83,55 @@ class BundleManifestTests(unittest.TestCase):
             manifest.write_text(json.dumps(payload))
             with self.assertRaisesRegex(SystemExit, "distinct Git connection IDs"):
                 launcher.bundle_manifest(manifest)
+
+
+class LangfuseEnvironmentTests(unittest.TestCase):
+    def test_generated_environment_is_private_complete_and_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "langfuse.env"
+            first = launcher.ensure_langfuse_environment(path)
+            first_content = first.read_text()
+            second = launcher.ensure_langfuse_environment(path)
+
+            values = dict(
+                line.split("=", 1)
+                for line in first_content.splitlines()
+                if line.strip()
+            )
+            self.assertEqual(second.read_text(), first_content)
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            self.assertEqual(values["DATABASE_URL"].rsplit("/", 1)[-1], "langfuse")
+            self.assertEqual(len(values["ENCRYPTION_KEY"]), 64)
+            self.assertTrue(
+                values["LANGFUSE_INIT_PROJECT_PUBLIC_KEY"].startswith("pk-lf-")
+            )
+            self.assertTrue(
+                values["LANGFUSE_INIT_PROJECT_SECRET_KEY"].startswith("sk-lf-")
+            )
+            self.assertNotIn("replace", first_content)
+
+    def test_existing_environment_keeps_secrets_and_gains_required_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "langfuse.env"
+            path.write_text(
+                "ENCRYPTION_KEY=existing-secret\n"
+                "LANGFUSE_INIT_PROJECT_SECRET_KEY=sk-lf-existing\n"
+            )
+
+            launcher.ensure_langfuse_environment(path)
+            values = dict(
+                line.split("=", 1)
+                for line in path.read_text().splitlines()
+                if line.strip()
+            )
+
+            self.assertEqual(values["ENCRYPTION_KEY"], "existing-secret")
+            self.assertEqual(
+                values["LANGFUSE_INIT_PROJECT_SECRET_KEY"], "sk-lf-existing"
+            )
+            self.assertEqual(
+                values["LANGFUSE_MIGRATION_V4_NATIVE_OTEL_BEHAVIOUR"], "direct"
+            )
 
 
 if __name__ == "__main__":

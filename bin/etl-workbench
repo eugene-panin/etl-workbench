@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import subprocess
 import sys
 
@@ -14,6 +15,7 @@ import sys
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / ".workbench"
 BASE_IMAGE = "etl-workbench:local"
+LANGFUSE_ENVIRONMENT = STATE / "langfuse.env"
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,11 @@ def parse_args() -> argparse.Namespace:
         "--observability",
         action="store_true",
         help="persist Airflow metrics and traces in local ClickStack",
+    )
+    parser.add_argument(
+        "--llm-observability",
+        action="store_true",
+        help="start local Langfuse v4 LLM observability; implies --observability",
     )
     return parser.parse_args()
 
@@ -152,6 +159,77 @@ def runtime_connection_line(bundle: DagBundle, ssh_key: Path | None) -> str:
     return environment_name + "=" + json.dumps(connection, separators=(",", ":"))
 
 
+def ensure_langfuse_environment(path: Path = LANGFUSE_ENVIRONMENT) -> Path:
+    values = {
+        "NEXTAUTH_URL": "http://localhost:18082",
+        "DATABASE_URL": "postgresql://etl:etl-local@postgres:5432/langfuse",
+        "LANGFUSE_POSTGRES_ADMIN_URL": (
+            "postgresql://etl:etl-local@postgres:5432/postgres"
+        ),
+        "LANGFUSE_POSTGRES_DATABASE": "langfuse",
+        "SALT": secrets.token_hex(32),
+        "ENCRYPTION_KEY": secrets.token_hex(32),
+        "NEXTAUTH_SECRET": secrets.token_hex(32),
+        "TELEMETRY_ENABLED": "false",
+        "CLICKHOUSE_MIGRATION_URL": "clickhouse://langfuse-clickhouse:9000",
+        "CLICKHOUSE_URL": "http://langfuse-clickhouse:8123",
+        "CLICKHOUSE_USER": "clickhouse",
+        "CLICKHOUSE_PASSWORD": secrets.token_urlsafe(32),
+        "CLICKHOUSE_CLUSTER_ENABLED": "false",
+        "LANGFUSE_MIGRATION_V4_NATIVE_OTEL_BEHAVIOUR": "direct",
+        "LANGFUSE_S3_EVENT_UPLOAD_BUCKET": "langfuse",
+        "LANGFUSE_S3_EVENT_UPLOAD_REGION": "us-east-1",
+        "LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID": "minio-local",
+        "LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY": "minio-local-secret",
+        "LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT": "http://object-store:8333",
+        "LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE": "true",
+        "LANGFUSE_S3_EVENT_UPLOAD_PREFIX": "events/",
+        "LANGFUSE_S3_MEDIA_UPLOAD_BUCKET": "langfuse",
+        "LANGFUSE_S3_MEDIA_UPLOAD_REGION": "us-east-1",
+        "LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID": "minio-local",
+        "LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY": "minio-local-secret",
+        "LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT": "http://object-store:8333",
+        "LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE": "true",
+        "LANGFUSE_S3_MEDIA_UPLOAD_PREFIX": "media/",
+        "LANGFUSE_S3_BATCH_EXPORT_ENABLED": "false",
+        "REDIS_HOST": "langfuse-redis",
+        "REDIS_PORT": "6379",
+        "REDIS_AUTH": secrets.token_urlsafe(32),
+        "REDIS_TLS_ENABLED": "false",
+        "LANGFUSE_INIT_ORG_ID": "etl-workbench",
+        "LANGFUSE_INIT_ORG_NAME": "ETL Workbench",
+        "LANGFUSE_INIT_PROJECT_ID": "etl-workbench",
+        "LANGFUSE_INIT_PROJECT_NAME": "ETL Workbench",
+        "LANGFUSE_INIT_PROJECT_PUBLIC_KEY": "pk-lf-" + secrets.token_hex(16),
+        "LANGFUSE_INIT_PROJECT_SECRET_KEY": "sk-lf-" + secrets.token_hex(32),
+        "LANGFUSE_INIT_USER_EMAIL": "admin@local.test",
+        "LANGFUSE_INIT_USER_NAME": "Local Admin",
+        "LANGFUSE_INIT_USER_PASSWORD": secrets.token_urlsafe(24),
+    }
+    path.parent.mkdir(exist_ok=True)
+    if path.exists():
+        content = path.read_text()
+        existing_names = {
+            line.split("=", 1)[0]
+            for line in content.splitlines()
+            if line.strip() and not line.lstrip().startswith("#") and "=" in line
+        }
+        missing = [
+            f"{name}={value}"
+            for name, value in values.items()
+            if name not in existing_names
+        ]
+        if missing:
+            separator = "" if not content or content.endswith("\n") else "\n"
+            path.write_text(content + separator + "\n".join(missing) + "\n")
+    else:
+        path.write_text(
+            "\n".join(f"{name}={value}" for name, value in values.items()) + "\n"
+        )
+    path.chmod(0o600)
+    return path
+
+
 def main() -> None:
     args = parse_args()
     if args.ssh_key and args.git_connection:
@@ -162,6 +240,10 @@ def main() -> None:
         raise SystemExit("provide one repository or --bundle-manifest")
     if args.bundle_manifest and args.git_connection:
         raise SystemExit("--git-connection is only available for the single-repository mode")
+    if args.llm_observability and (args.external_db or args.external_objects):
+        raise SystemExit(
+            "--llm-observability currently requires local PostgreSQL and object storage"
+        )
 
     pipeline_env = existing_file(args.env, "pipeline environment file") if args.env else None
     ssh_key = existing_file(args.ssh_key, "SSH key") if args.ssh_key else None
@@ -216,6 +298,9 @@ def main() -> None:
     if ssh_key:
         compose_files.extend(["-f", "compose.git-ssh.yaml"])
         compose_env["GIT_KNOWN_HOSTS_PATH"] = str(known_hosts)
+    if args.llm_observability:
+        compose_files.extend(["-f", "compose.langfuse.yaml"])
+        compose_env["LANGFUSE_ENV_FILE"] = str(ensure_langfuse_environment())
 
     runtime_lines.append(
         "AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST="
@@ -236,16 +321,21 @@ def main() -> None:
         command.extend(["--profile", "local-db"])
     if not args.external_objects:
         command.extend(["--profile", "local-objects"])
-    if args.observability:
+    if args.observability or args.llm_observability:
         compose_env["AIRFLOW_OTEL_ENABLED"] = "true"
         command.extend(["--profile", "observability"])
+    if args.llm_observability:
+        command.extend(["--profile", "llm-observability"])
     command.extend(["up", "-d", "--wait"])
     run(command, env=compose_env)
     print("Airflow: http://127.0.0.1:18080", flush=True)
     print("DAG bundles: " + ", ".join(bundle.name for bundle in bundles), flush=True)
-    if args.observability:
+    if args.observability or args.llm_observability:
         clickstack_ui_port = compose_env.get("CLICKSTACK_UI_PORT", "18081")
         print(f"ClickStack: http://127.0.0.1:{clickstack_ui_port}", flush=True)
+    if args.llm_observability:
+        langfuse_ui_port = compose_env.get("LANGFUSE_UI_PORT", "18082")
+        print(f"Langfuse: http://127.0.0.1:{langfuse_ui_port}", flush=True)
 
 
 if __name__ == "__main__":

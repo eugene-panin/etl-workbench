@@ -53,7 +53,15 @@ services:
         condition: service_healthy
         required: false
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8080/api/v2/monitor/health"]
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import json, urllib.request;
+          health=json.load(urllib.request.urlopen("http://127.0.0.1:8080/api/v2/monitor/health", timeout=4));
+          required=("metadatabase", "scheduler", "triggerer", "dag_processor");
+          assert all(health.get(component, {}).get("status") == "healthy" for component in required), health
       interval: 15s
       timeout: 5s
       retries: 20
@@ -92,6 +100,8 @@ services:
       - clickstack-mongodb:/data/db
       - clickstack-clickhouse:/var/lib/clickhouse
       - clickstack-clickhouse-logs:/var/log/clickhouse-server
+    tmpfs:
+      - /var/log:size=256m,mode=1777
     expose:
       - "4317"
       - "4318"
@@ -123,7 +133,12 @@ services:
     volumes:
       - seaweedfs-data:/data
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:9333/cluster/status"]
+      test:
+        - CMD-SHELL
+        - >-
+          curl --fail --silent http://127.0.0.1:9333/cluster/status >/dev/null
+          && curl --fail --silent http://127.0.0.1:9333/dir/status
+          | grep -Eq '"Free":[1-9][0-9]*'
       interval: 5s
       timeout: 5s
       retries: 20
