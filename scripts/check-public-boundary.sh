@@ -16,3 +16,23 @@ if git log --all --format=%B | grep -i -E 'od''oo|part''ner|(^|[^a-z])le''ad([^a
   echo "Public boundary violation in commit history" >&2
   exit 1
 fi
+
+cyrillic_pattern='[\x{0400}-\x{052f}\x{1c80}-\x{1c8f}\x{2de0}-\x{2dff}\x{a640}-\x{a69f}]'
+cyrillic_matches="$(git grep -I -n -P "$cyrillic_pattern" -- . || true)"
+
+if [ -n "$cyrillic_matches" ]; then
+  printf '%s\n' "Non-English public content:" "$cyrillic_matches" >&2
+  exit 1
+fi
+
+if git log --all --format=%B | python3 -c '
+import sys
+import unicodedata
+
+text = sys.stdin.read()
+found = any(unicodedata.name(char, "").startswith("CYRILLIC") for char in text)
+raise SystemExit(0 if found else 1)
+'; then
+  echo "Non-English public content in commit history" >&2
+  exit 1
+fi
