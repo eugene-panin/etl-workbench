@@ -220,11 +220,14 @@ docker compose -f compose.yaml -f compose.minio-migration.yaml \
   --profile local-objects --profile migrate-minio down
 ```
 
-The migration copies the current contents of `ETL_LOCAL_BUCKET` and fails if
-`mc diff` reports a difference; it does not delete the source volume. After it
-succeeds, start the workbench normally. To roll back, stop the new stack
-without `--volumes` and run the previous workbench release against the
-preserved `minio-data` volume.
+The migration copies the current contents of `ETL_LOCAL_BUCKET` and verifies
+that the complete, sorted object key-and-size inventory has the same SHA-256
+digest in both stores. This avoids order-dependent `mc diff` output; the copy
+still fails if an object is missing, added only to the target, renamed or has a
+different size. It does not delete the source volume. After it succeeds, start
+the workbench normally. To roll back, stop the new stack without `--volumes`
+and run the previous workbench release against the preserved `minio-data`
+volume.
 
 ## Stop
 

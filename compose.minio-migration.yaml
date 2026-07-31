@@ -32,11 +32,17 @@ services:
         && mc mirror --overwrite --preserve
         source/${ETL_LOCAL_BUCKET:-etl-local}
         target/${ETL_LOCAL_BUCKET:-etl-local}
-        && differences="$$(mc diff --no-color
-        source/${ETL_LOCAL_BUCKET:-etl-local}
-        target/${ETL_LOCAL_BUCKET:-etl-local})"
-        && if [ -n "$$differences" ]; then
-        printf '%s\n' "$$differences" >&2;
+        && mc alias set inventory http://legacy-minio:9000 minio-local minio-local-secret
+        && source_inventory="$$(mc find
+        inventory/${ETL_LOCAL_BUCKET:-etl-local}
+        --print '{size} {}' | sort | sha256sum | cut -d ' ' -f 1)"
+        && mc alias set inventory http://object-store:8333 minio-local minio-local-secret
+        && target_inventory="$$(mc find
+        inventory/${ETL_LOCAL_BUCKET:-etl-local}
+        --print '{size} {}' | sort | sha256sum | cut -d ' ' -f 1)"
+        && if [ "$$source_inventory" != "$$target_inventory" ]; then
+        printf 'object inventory differs: source=%s target=%s\n'
+        "$$source_inventory" "$$target_inventory" >&2;
         exit 1;
         fi
     restart: "no"
