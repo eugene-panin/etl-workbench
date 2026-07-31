@@ -134,5 +134,42 @@ class LangfuseEnvironmentTests(unittest.TestCase):
             )
 
 
+class N8nEnvironmentTests(unittest.TestCase):
+    def test_generated_environment_is_private_complete_and_stable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "n8n.env"
+            first = launcher.ensure_n8n_environment(path)
+            first_content = first.read_text()
+            second = launcher.ensure_n8n_environment(path)
+
+            values = dict(
+                line.split("=", 1)
+                for line in first_content.splitlines()
+                if line.strip()
+            )
+            self.assertEqual(second.read_text(), first_content)
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+            self.assertEqual(values["DB_POSTGRESDB_DATABASE"], "n8n")
+            self.assertEqual(len(values["N8N_ENCRYPTION_KEY"]), 64)
+            self.assertEqual(values["N8N_RUNNERS_ENABLED"], "true")
+            self.assertNotIn("replace", first_content)
+
+    def test_existing_environment_keeps_encryption_key(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "n8n.env"
+            path.write_text("N8N_ENCRYPTION_KEY=existing-secret\n")
+
+            launcher.ensure_n8n_environment(path)
+            values = dict(
+                line.split("=", 1)
+                for line in path.read_text().splitlines()
+                if line.strip()
+            )
+
+            self.assertEqual(values["N8N_ENCRYPTION_KEY"], "existing-secret")
+            self.assertEqual(values["DB_TYPE"], "postgresdb")
+            self.assertEqual(values["N8N_BLOCK_ENV_ACCESS_IN_NODE"], "true")
+
+
 if __name__ == "__main__":
     unittest.main()
