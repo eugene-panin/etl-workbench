@@ -67,6 +67,11 @@ def parse_args() -> argparse.Namespace:
         help="start a dedicated local ClickHouse analytics database",
     )
     parser.add_argument(
+        "--inference-gpu",
+        action="store_true",
+        help="start the vLLM OpenAI-compatible server on one NVIDIA GPU",
+    )
+    parser.add_argument(
         "--observability",
         action="store_true",
         help="persist Airflow metrics and traces in local ClickStack",
@@ -333,6 +338,8 @@ def main() -> None:
         command.extend(["--profile", "local-objects"])
     if args.analytics:
         command.extend(["--profile", "analytics"])
+    if args.inference_gpu:
+        command.extend(["--profile", "inference-gpu"])
     if args.observability or args.llm_observability:
         compose_env["AIRFLOW_OTEL_ENABLED"] = "true"
         command.extend(["--profile", "observability"])
@@ -348,6 +355,14 @@ def main() -> None:
         clickhouse_http_port = compose_env.get("CLICKHOUSE_HTTP_PORT", "18123")
         print(
             f"ClickHouse HTTP: http://127.0.0.1:{clickhouse_http_port}",
+            flush=True,
+        )
+    if args.inference_gpu:
+        vllm_http_port = compose_env.get("VLLM_HTTP_PORT", "18000")
+        print(f"vLLM API: http://127.0.0.1:{vllm_http_port}/v1", flush=True)
+        print(
+            "vLLM model: "
+            + compose_env.get("VLLM_SERVED_MODEL_NAME", "local-model"),
             flush=True,
         )
     if args.observability or args.llm_observability:

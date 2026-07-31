@@ -63,6 +63,7 @@ Useful options:
 --external-objects       do not start local object storage
 --git-connection ID      use an existing Airflow Git connection
 --analytics              start a dedicated local ClickHouse analytics database
+--inference-gpu          start vLLM on one NVIDIA GPU
 --observability          persist Airflow metrics and traces in local ClickStack
 --llm-observability      start Langfuse v4; implies --observability
 ```
@@ -216,6 +217,57 @@ makes a live request with the stored credential; for the OpenAI provider, this
 is a model-list request. Gemini's OpenAI-compatible endpoint does not expose
 that model-list route, so validate a Gemini connection with a Chat Completions
 task instead.
+
+## Local GPU inference with vLLM
+
+On a Linux host with an NVIDIA GPU, NVIDIA Container Toolkit and enough GPU
+memory for the selected model, add `--inference-gpu`:
+
+```bash
+./bin/etl-workbench https://github.com/example/acme-pipeline.git \
+  --inference-gpu
+```
+
+The profile starts the official vLLM OpenAI server on
+<http://127.0.0.1:18000/v1>. Airflow receives an `openai` Connection named
+`llm_local_vllm`; pipeline tasks keep using the same `conn_id` plus `model`
+contract as cloud providers.
+
+The conservative default downloads `Qwen/Qwen3-0.6B` and exposes it under the
+stable API name `local-model`. Change the weights and API name independently:
+
+```bash
+VLLM_MODEL=Qwen/Qwen3-0.6B \
+VLLM_SERVED_MODEL_NAME=local-qwen \
+  ./bin/etl-workbench https://github.com/example/acme-pipeline.git \
+  --inference-gpu
+```
+
+The Hugging Face cache is persistent in the `vllm-huggingface-cache` volume.
+Set `HF_TOKEN` only for a model whose repository requires it. The image and
+model weights are large downloads; the profile is never started implicitly.
+Usage-stat collection is disabled.
+
+The committed `vllm-local` API key is a loopback-only development credential.
+If the Compose network is shared, override both `VLLM_API_KEY` and
+`AIRFLOW_CONN_LLM_LOCAL_VLLM` so the server and Airflow Connection remain in
+sync.
+
+Verify model discovery and one synthetic Chat Completions request:
+
+```bash
+scripts/check-vllm-contract.sh
+```
+
+vLLM exposes Prometheus metrics at `/metrics`. LLM request traces still belong
+to the pipeline instrumentation and Langfuse; model prompts and responses must
+not be copied into infrastructure metric labels.
+
+Docker Desktop on macOS cannot expose the Apple GPU to this CUDA container.
+For Mac-local inference, run Ollama or an MLX server on the host and create
+another `openai` Connection pointing to
+`http://host.docker.internal:<port>/v1`. The platform contract stays
+`conn_id + model`; Ollama and MLX are not bundled into the GPU profile.
 
 ## Local analytics with ClickHouse
 
