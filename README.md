@@ -1,7 +1,7 @@
 # ETL Workbench
 
 A small local Apache Airflow workbench for trusted, code-defined ETL pipelines.
-It runs Airflow and, when requested, local PostgreSQL, ClickHouse and
+It runs Airflow and, when requested, local PostgreSQL, ClickHouse, n8n and
 S3-compatible object storage. Pipeline code and data contracts stay in their
 own repositories.
 
@@ -64,6 +64,7 @@ Useful options:
 --git-connection ID      use an existing Airflow Git connection
 --analytics              start a dedicated local ClickHouse analytics database
 --inference-gpu          start vLLM on one NVIDIA GPU
+--automation             start local n8n workflow automation
 --observability          persist Airflow metrics and traces in local ClickStack
 --llm-observability      start Langfuse v4; implies --observability
 ```
@@ -150,11 +151,11 @@ Airflow discovers compatible DAGs from the Git bundle and displays them in its
 UI. The pipeline repository owns schemas and migrations, retry and idempotency
 behavior, object keys and retention, and all business logic.
 
-Local profile connection IDs are `local_postgres`, `local_s3` and, when
-`--analytics` is enabled, `local_clickhouse`; the local bucket is `etl-local`.
-SeaweedFS supplies the local S3-compatible endpoint. External connections may
-be created in the Airflow UI or provided as `AIRFLOW_CONN_*` variables in the
-pipeline environment file.
+Local profile connection IDs are `local_postgres`, `local_s3`,
+`local_clickhouse`, `local_n8n` and `llm_local_vllm`; the local bucket is
+`etl-local`. SeaweedFS supplies the local S3-compatible endpoint. External
+connections may be created in the Airflow UI or provided as `AIRFLOW_CONN_*`
+variables in the pipeline environment file.
 
 ## Airflow metadata
 
@@ -268,6 +269,52 @@ For Mac-local inference, run Ollama or an MLX server on the host and create
 another `openai` Connection pointing to
 `http://host.docker.internal:<port>/v1`. The platform contract stays
 `conn_id + model`; Ollama and MLX are not bundled into the GPU profile.
+
+## Local automation with n8n
+
+Add `--automation` to start n8n for webhooks, SaaS integrations,
+notifications and other business actions:
+
+```bash
+./bin/etl-workbench https://github.com/example/acme-pipeline.git \
+  --automation
+```
+
+Open <http://127.0.0.1:18083> and create the first local owner in the n8n UI.
+The launcher creates a dedicated `n8n` PostgreSQL database and generates one
+stable encryption key in the ignored `.workbench/n8n.env` file with mode
+`0600`. The key must remain stable because n8n uses it to encrypt stored
+credentials. The `n8n-data` volume keeps n8n application state that does not
+belong in PostgreSQL. This local profile cannot be combined with
+`--external-db`.
+
+Airflow owns scheduled ETL, dependencies, retries, data quality and large data
+movement. n8n owns external triggers and business-system actions. Keep one
+workflow owner for each compute path instead of splitting individual ETL steps
+between both orchestrators.
+
+The preferred boundary is:
+
+```text
+Airflow -> PostgreSQL, ClickHouse or S3 -> n8n -> SaaS, notification or API
+```
+
+Publish compact completed events with a stable `event_id`; do not make n8n
+process large tables or partially written objects. Airflow can call an n8n
+webhook through the `local_n8n` HTTP Connection. When n8n needs to start a DAG,
+create an n8n credential for the Airflow API at `http://airflow:8080` and keep
+that credential in n8n rather than in a workflow export.
+
+Verify that n8n is reachable and its PostgreSQL migrations are complete:
+
+```bash
+scripts/check-n8n-contract.sh
+```
+
+The profile is intended for internal local automation. n8n uses its
+[Sustainable Use License](https://docs.n8n.io/sustainable-use-license/);
+review the current license before offering n8n itself as a hosted or
+white-label product.
 
 ## Local analytics with ClickHouse
 

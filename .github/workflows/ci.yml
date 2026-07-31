@@ -39,11 +39,15 @@ jobs:
             --profile local-db --profile local-objects \
             --profile observability --profile llm-observability \
             config --quiet
+          N8N_ENV_FILE=n8n.env.example docker compose \
+            -f compose.yaml -f compose.n8n.yaml \
+            --profile local-db --profile automation \
+            config --quiet
 
       - name: Test launcher
         run: |
           python -m unittest discover -s tests
-          sh -n scripts/check-vllm-contract.sh
+          sh -n scripts/check-vllm-contract.sh scripts/check-n8n-contract.sh
 
       - name: Build image
         run: docker build -t etl-workbench:local .
@@ -94,6 +98,7 @@ jobs:
             --subdir example-pipeline/dags \
             --image etl-workbench:local \
             --analytics \
+            --automation \
             --llm-observability
           for attempt in $(seq 1 20); do
             if docker compose exec airflow airflow dags list | grep -q workbench_runtime_smoke; then
@@ -110,21 +115,30 @@ jobs:
           scripts/check-clickhouse-contract.sh
           scripts/check-otel-contract.sh
           scripts/check-langfuse-contract.sh
+          scripts/check-n8n-contract.sh
 
       - name: Show service logs after failure
         if: failure()
         run: |
-          LANGFUSE_ENV_FILE=langfuse.env.example docker compose \
-            -f compose.yaml -f compose.local.yaml -f compose.langfuse.yaml \
+          LANGFUSE_ENV_FILE=langfuse.env.example \
+            N8N_ENV_FILE=n8n.env.example \
+            docker compose \
+            -f compose.yaml -f compose.local.yaml \
+            -f compose.langfuse.yaml -f compose.n8n.yaml \
             --profile local-db --profile local-objects \
-            --profile analytics --profile observability --profile llm-observability \
+            --profile analytics --profile automation \
+            --profile observability --profile llm-observability \
             logs --no-color
 
       - name: Remove disposable volumes
         if: always()
         run: |
-          LANGFUSE_ENV_FILE=langfuse.env.example docker compose \
-            -f compose.yaml -f compose.local.yaml -f compose.langfuse.yaml \
+          LANGFUSE_ENV_FILE=langfuse.env.example \
+            N8N_ENV_FILE=n8n.env.example \
+            docker compose \
+            -f compose.yaml -f compose.local.yaml \
+            -f compose.langfuse.yaml -f compose.n8n.yaml \
             --profile local-db --profile local-objects \
-            --profile analytics --profile observability --profile llm-observability \
+            --profile analytics --profile automation \
+            --profile observability --profile llm-observability \
             down --volumes --remove-orphans

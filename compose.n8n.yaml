@@ -1,0 +1,72 @@
+x-n8n-env-file: &n8n-env-file
+  - path: ${N8N_ENV_FILE:-./n8n.env}
+    required: true
+
+services:
+  n8n-db-create:
+    image: postgres:17.5-alpine@sha256:6567bca8d7bc8c82c5922425a0baee57be8402df92bae5eacad5f01ae9544daa
+    profiles: ["automation"]
+    restart: "no"
+    env_file: *n8n-env-file
+    command:
+      - sh
+      - -ec
+      - >-
+        export PGPASSWORD="$$DB_POSTGRESDB_PASSWORD";
+        psql
+        --host "$$DB_POSTGRESDB_HOST"
+        --port "$$DB_POSTGRESDB_PORT"
+        --username "$$DB_POSTGRESDB_USER"
+        --dbname postgres
+        --tuples-only
+        --no-align
+        --command "SELECT 1 FROM pg_database WHERE datname = '$$DB_POSTGRESDB_DATABASE'"
+        | grep -q 1
+        || createdb
+        --host "$$DB_POSTGRESDB_HOST"
+        --port "$$DB_POSTGRESDB_PORT"
+        --username "$$DB_POSTGRESDB_USER"
+        "$$DB_POSTGRESDB_DATABASE"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - workbench
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.31.7@sha256:e6bc77c3ace603bb66a1cf805756041986f721bfb8e1c1b88721e6f1b9d89c2a
+    profiles: ["automation"]
+    restart: unless-stopped
+    env_file: *n8n-env-file
+    environment:
+      N8N_LISTEN_ADDRESS: 0.0.0.0
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+    depends_on:
+      n8n-db-create:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${N8N_UI_PORT:-18083}:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch("http://127.0.0.1:5678/healthz/readiness").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - workbench
+
+volumes:
+  n8n-data:

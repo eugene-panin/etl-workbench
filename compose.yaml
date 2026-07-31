@@ -17,6 +17,7 @@ x-airflow-environment: &airflow-environment
   AIRFLOW_CONN_LOCAL_POSTGRES: ${AIRFLOW_CONN_LOCAL_POSTGRES:-postgresql://etl:etl-local@postgres:5432/etl}
   AIRFLOW_CONN_LOCAL_S3: ${AIRFLOW_CONN_LOCAL_S3:-{"conn_type":"aws","login":"minio-local","password":"minio-local-secret","extra":{"endpoint_url":"http://object-store:8333","region_name":"us-east-1","config_kwargs":{"s3":{"addressing_style":"path"}}}}}
   AIRFLOW_CONN_LOCAL_CLICKHOUSE: ${AIRFLOW_CONN_LOCAL_CLICKHOUSE:-{"conn_type":"http","host":"analytics-clickhouse","login":"analytics","password":"analytics-local","schema":"analytics","port":8123}}
+  AIRFLOW_CONN_LOCAL_N8N: ${AIRFLOW_CONN_LOCAL_N8N:-{"conn_type":"http","host":"http://n8n:5678"}}
   AIRFLOW_CONN_LLM_LOCAL_VLLM: ${AIRFLOW_CONN_LLM_LOCAL_VLLM:-{"conn_type":"openai","password":"vllm-local","host":"http://vllm:8000/v1"}}
   ETL_LOCAL_BUCKET: ${ETL_LOCAL_BUCKET:-etl-local}
   OTEL_EXPORTER_OTLP_ENDPOINT: http://clickstack:4317
