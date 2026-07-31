@@ -54,7 +54,18 @@ jobs:
 
       - name: Run full local smoke
         run: |
+          docker compose -f compose.yaml -f compose.local.yaml run \
+            --rm --no-deps \
+            -e AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////var/lib/airflow/airflow.db \
+            airflow airflow db migrate
+          docker compose -f compose.yaml -f compose.local.yaml run \
+            --rm --no-deps \
+            -e AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=sqlite:////var/lib/airflow/airflow.db \
+            airflow airflow connections add metadata_migration_smoke \
+            --conn-json '{"conn_type":"http","host":"https://example.invalid"}'
           docker compose -f compose.yaml -f compose.local.yaml --profile local-db --profile local-objects up -d --wait
+          EXPECTED_AIRFLOW_CONNECTION_ID=metadata_migration_smoke \
+            scripts/check-airflow-metadata-contract.sh
           docker compose -f compose.yaml -f compose.local.yaml exec airflow airflow dags test workbench_runtime_smoke 2026-01-01
           docker compose -f compose.yaml -f compose.local.yaml exec airflow airflow dags test workbench_storage_smoke 2026-01-01
           docker compose -f compose.yaml -f compose.local.yaml --profile local-db --profile local-objects down --volumes
@@ -82,6 +93,7 @@ jobs:
           done
           docker compose exec airflow airflow dags list | grep pipeline
           docker compose exec airflow airflow dags test workbench_runtime_smoke 2026-01-02
+          scripts/check-airflow-metadata-contract.sh
           scripts/check-otel-contract.sh
           scripts/check-langfuse-contract.sh
 
