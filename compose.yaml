@@ -17,6 +17,7 @@ x-airflow-environment: &airflow-environment
   AIRFLOW_CONN_LOCAL_POSTGRES: ${AIRFLOW_CONN_LOCAL_POSTGRES:-postgresql://etl:etl-local@postgres:5432/etl}
   AIRFLOW_CONN_LOCAL_S3: ${AIRFLOW_CONN_LOCAL_S3:-{"conn_type":"aws","login":"minio-local","password":"minio-local-secret","extra":{"endpoint_url":"http://object-store:8333","region_name":"us-east-1","config_kwargs":{"s3":{"addressing_style":"path"}}}}}
   AIRFLOW_CONN_LOCAL_CLICKHOUSE: ${AIRFLOW_CONN_LOCAL_CLICKHOUSE:-{"conn_type":"http","host":"analytics-clickhouse","login":"analytics","password":"analytics-local","schema":"analytics","port":8123}}
+  AIRFLOW_CONN_LLM_LOCAL_VLLM: ${AIRFLOW_CONN_LLM_LOCAL_VLLM:-{"conn_type":"openai","password":"vllm-local","host":"http://vllm:8000/v1"}}
   ETL_LOCAL_BUCKET: ${ETL_LOCAL_BUCKET:-etl-local}
   OTEL_EXPORTER_OTLP_ENDPOINT: http://clickstack:4317
   OTEL_EXPORTER_OTLP_HEADERS: authorization=${CLICKSTACK_INGESTION_KEY:-etl-workbench-local}
@@ -27,6 +28,7 @@ x-airflow-environment: &airflow-environment
   OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-service.namespace=etl-workbench,deployment.environment.name=local}
   OTEL_SERVICE_NAME: ${OTEL_SERVICE_NAME:-etl-workbench-airflow}
   PYTHONPATH: /opt/pipeline/src
+  VLLM_SERVED_MODEL_NAME: ${VLLM_SERVED_MODEL_NAME:-local-model}
 
 services:
   airflow:
@@ -55,6 +57,9 @@ services:
         condition: service_healthy
         required: false
       analytics-clickhouse:
+        condition: service_healthy
+        required: false
+      vllm:
         condition: service_healthy
         required: false
       clickstack:
@@ -234,6 +239,51 @@ services:
     networks:
       - workbench
 
+  vllm:
+    image: vllm/vllm-openai:v0.26.0-ubuntu2404@sha256:ef7bfc14df9233e3e5d41e733e3be0afa6abbe5ae5f14ee0758110030f6cd53e
+    profiles: ["inference-gpu"]
+    restart: unless-stopped
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      VLLM_NO_USAGE_STATS: "1"
+    command:
+      - --model
+      - ${VLLM_MODEL:-Qwen/Qwen3-0.6B}
+      - --served-model-name
+      - ${VLLM_SERVED_MODEL_NAME:-local-model}
+      - --api-key
+      - ${VLLM_API_KEY:-vllm-local}
+      - --gpu-memory-utilization
+      - ${VLLM_GPU_MEMORY_UTILIZATION:-0.92}
+    ports:
+      - "127.0.0.1:${VLLM_HTTP_PORT:-18000}:8000"
+    volumes:
+      - vllm-huggingface-cache:/root/.cache/huggingface
+    shm_size: ${VLLM_SHM_SIZE:-8gb}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${VLLM_GPU_COUNT:-1}
+              capabilities: [gpu]
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=4)
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 180s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - workbench
+
 volumes:
   analytics-clickhouse-data:
   airflow-home:
@@ -242,6 +292,7 @@ volumes:
   clickstack-mongodb:
   postgres-data:
   seaweedfs-data:
+  vllm-huggingface-cache:
 
 networks:
   workbench:

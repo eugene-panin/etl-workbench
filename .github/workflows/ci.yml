@@ -25,9 +25,11 @@ jobs:
           docker compose --profile local-db config --quiet
           docker compose --profile local-objects config --quiet
           docker compose --profile analytics config --quiet
+          docker compose --profile inference-gpu config --quiet
           docker compose --profile observability config --quiet
           docker compose \
-            --profile local-db --profile local-objects --profile analytics \
+            --profile local-db --profile local-objects \
+            --profile analytics --profile inference-gpu \
             config --quiet
           AIRFLOW_OTEL_ENABLED=true docker compose \
             --profile local-db --profile local-objects --profile observability \
@@ -39,7 +41,9 @@ jobs:
             config --quiet
 
       - name: Test launcher
-        run: python -m unittest discover -s tests
+        run: |
+          python -m unittest discover -s tests
+          sh -n scripts/check-vllm-contract.sh
 
       - name: Build image
         run: docker build -t etl-workbench:local .
